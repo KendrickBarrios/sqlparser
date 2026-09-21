@@ -10,36 +10,43 @@ const (
 	indexAfterInsertInto = 12
 )
 
+type InsertScript struct {
+	tableName string
+	columns []string
+	rows [][]string
+}
+
 var unquotedTableNameRegex = regexp.MustCompile(`[a-z_]{1}[0-9a-z_]+`)
 var	quotedTableNameRegex = regexp.MustCompile(`[0-9a-zA-Z-_! $]+`)
 var InvalidSyntaxError = errors.New("invalid syntax")
 
-func ParseSqlIntoJson(script string) (string, error) {
+func BuildInsertScriptStruct(script string) (InsertScript, error) {
+	insertScript := InsertScript{}
 	script = strings.Trim(script, " ")
 	sliceSplitByQuotes := splitScriptByQuotes(script)
 	err := validateQuotePairs(len(sliceSplitByQuotes))
 
 	if err != nil {
-		return "", err
+		return insertScript, err
 	} 
 
 	err = validateBeginsWithInsertInto(sliceSplitByQuotes[0])
-
-	if err != nil {
-		return "", err
-	}
-
-	validTableName := validateTableName(sliceSplitByQuotes[0])
-
-	if !validTableName {
-		return "", InvalidSyntaxError
-	}
-
 	sliceSplitByQuotes[0] = removeInsertInto(sliceSplitByQuotes[0])
 
-	_, err = extractTableName(sliceSplitByQuotes[0])
+	if err != nil {
+		return insertScript, err
+	}
+
+	isTableNameQuoted := verifyIfTableNameIsQuoted(sliceSplitByQuotes[0])
+	validTableName := validateTableName(sliceSplitByQuotes[0], isTableNameQuoted)
+
+	if !validTableName {
+		return insertScript, InvalidSyntaxError
+	}
+
+	insertScript.tableName = extractTableName(sliceSplitByQuotes[0], isTableNameQuoted)
 	
-	return "", nil
+	return insertScript, nil
 }
 
 func splitScriptByQuotes(script string) []string {
@@ -66,27 +73,30 @@ func removeInsertInto(fragment string) string {
 	return fragment[indexAfterInsertInto:]
 }
 
-func validateTableName(fragment string) bool {
-	var slice = make([]string, 0)
-
-	if strings.Contains(fragment, "\"") {
-		slice = strings.Split(fragment, "\"")
-	}
-
-	if len(slice) % 2 == 0 {
-		return false
-	}
-
-	if len(slice) > 1 {
-		return quotedTableNameRegex.Match([]byte(slice[1]))
-	} else {
-		return unquotedTableNameRegex.Match([]byte(strings.ToLower(fragment)))
-	}
+func verifyIfTableNameIsQuoted(fragment string) bool {
+	return strings.Contains(fragment, "\"")
 }
 
-func extractTableName(fragment string) (string, error) {
-	// TODO: implement function
-	return "", nil
+func validateTableName(fragment string, isTableNameQuoted bool) bool {
+	if isTableNameQuoted {
+		slicedFragment := strings.Split(fragment, "\"")
+		if len(slicedFragment) % 2 == 0 {
+			return false
+		}
+		return quotedTableNameRegex.Match([]byte(slicedFragment[1]))
+	}
+
+	return unquotedTableNameRegex.Match([]byte(strings.ToLower(fragment)))
+}
+
+func extractTableName(fragment string, isTableNameQuoted bool) string {
+	if isTableNameQuoted {
+		return strings.Split(fragment, "\"")[1]
+	}
+
+	trimmedFragment := strings.Trim(fragment, " ")
+	splitFragment := strings.Split(trimmedFragment, " ")
+	return splitFragment[0]
 }
 
 func main() {
