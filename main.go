@@ -31,12 +31,12 @@ func BuildInsertScriptStruct(script string) (InsertScript, error) {
 	} 
 
 	err = validateBeginsWithInsertInto(sliceSplitByQuotes[0])
-	sliceSplitByQuotes[0] = removeInsertInto(sliceSplitByQuotes[0])
 
 	if err != nil {
 		return insertScript, err
 	}
 
+	sliceSplitByQuotes[0] = removeInsertInto(sliceSplitByQuotes[0])
 	isTableNameQuoted := verifyIfTableNameIsQuoted(sliceSplitByQuotes[0])
 	validTableName := validateTableName(sliceSplitByQuotes[0], isTableNameQuoted)
 
