@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"errors"
 	"regexp"
 	"strings"
@@ -16,87 +17,64 @@ type InsertScript struct {
 	rows [][]string
 }
 
-var unquotedTableNameRegex = regexp.MustCompile(`[a-z_]{1}[0-9a-z_]+`)
-var	quotedTableNameRegex = regexp.MustCompile(`[0-9a-zA-Z-_! $]+`)
+var unquotedNameRegex = regexp.MustCompile(`[a-z_]{1}[0-9a-z_]+`)
+var	quotedNameRegex = regexp.MustCompile(`"[0-9a-zA-Z-_! $]+"`)
 var InvalidSyntaxError = errors.New("invalid syntax")
 
-func BuildInsertScriptStruct(script string) (InsertScript, error) {
+func createScriptScanner(script string) (scriptScanner *bufio.Scanner) {
+	scriptScanner = bufio.NewScanner(strings.NewReader(script))
+	scriptScanner.Split(splitFunc)
+	return scriptScanner
+}
+
+func splitFunc(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	advance, token, err = bufio.ScanWords(data, atEOF)
+	return
+}
+
+func BuildInsertScriptStruct(script string, scriptScanner *bufio.Scanner) (InsertScript, error) {
 	insertScript := InsertScript{}
-	script = strings.Trim(script, " ")
-	sliceSplitByQuotes := splitScriptByQuotes(script)
-	err := validateQuotePairs(len(sliceSplitByQuotes))
+	// at End Of String
+	atEOS := false
 
-	if err != nil {
-		return insertScript, err
-	} 
-
-	err = validateBeginsWithInsertInto(sliceSplitByQuotes[0])
-
-	if err != nil {
-		return insertScript, err
+	if strings.ToLower(scriptScanner.Text()) != "insert" {
+		return insertScript, InvalidSyntaxError
 	}
-
-	sliceSplitByQuotes[0] = removeInsertInto(sliceSplitByQuotes[0])
-	isTableNameQuoted := verifyIfTableNameIsQuoted(sliceSplitByQuotes[0])
-	validTableName := validateTableName(sliceSplitByQuotes[0], isTableNameQuoted)
-
-	if !validTableName {
+	
+	atEOS = scriptScanner.Scan()
+	if atEOS || strings.ToLower(scriptScanner.Text()) != "into" {
 		return insertScript, InvalidSyntaxError
 	}
 
-	insertScript.tableName = extractTableName(sliceSplitByQuotes[0], isTableNameQuoted)
-	
+	atEOS = scriptScanner.Scan()
+	if atEOS {
+		return insertScript, InvalidSyntaxError
+	}
+
+	// TODO: fix logic, quoted table name may have inner spaces
+
 	return insertScript, nil
 }
 
-func splitScriptByQuotes(script string) []string {
-	return strings.Split(script, "'")
-}
-
-func validateQuotePairs(length int) error {
-	if length % 2 != 0 {
-		return nil
+func extractQuotedName(scriptScanner *bufio.Scanner, delimiter rune) (name string) {
+	// if current word also ends in ', the name doesn't contain spaces and is returned as is
+	// TODO: implement logic for case ends with comma, rather than single quote
+	if scriptScanner.Text()[len(scriptScanner.Text()) - 1] == '\'' {
+		name = scriptScanner.Text()
+		scriptScanner.Scan()
+		return
 	}
 
-	return InvalidSyntaxError
-}
+	// if the name contain spaces, join the words into a single quoted string
+	// TODO: complete function
+	name = ""
+	return
+} 
 
-func validateBeginsWithInsertInto(fragment string) error {
-	if strings.Index(strings.ToLower(fragment), "insert into ") == 0 {
-		return nil
-	}
-
-	return InvalidSyntaxError
-}
-
-func removeInsertInto(fragment string) string {
-	return fragment[indexAfterInsertInto:]
-}
-
-func verifyIfTableNameIsQuoted(fragment string) bool {
-	return strings.Contains(fragment, "\"")
-}
-
-func validateTableName(fragment string, isTableNameQuoted bool) bool {
-	if isTableNameQuoted {
-		slicedFragment := strings.Split(fragment, "\"")
-		if len(slicedFragment) % 2 == 0 {
-			return false
-		}
-		return quotedTableNameRegex.Match([]byte(slicedFragment[1]))
-	}
-
-	return unquotedTableNameRegex.Match([]byte(strings.ToLower(fragment)))
-}
-
-func extractTableName(fragment string, isTableNameQuoted bool) string {
-	if isTableNameQuoted {
-		return strings.Split(fragment, "\"")[1]
-	}
-
-	trimmedFragment := strings.Trim(fragment, " ")
-	splitFragment := strings.Split(trimmedFragment, " ")
-	return splitFragment[0]
+func validateName(fragment string) bool {
+	quotedMatch := quotedNameRegex.Match([]byte(fragment))
+	unquotedMatch := unquotedNameRegex.Match([]byte(fragment))
+	return quotedMatch || unquotedMatch
 }
 
 func main() {
