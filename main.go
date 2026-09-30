@@ -63,8 +63,7 @@ func SplitSqlToken(data []byte, atEOF bool) (advance int, token []byte, err erro
 			if isUnquotedDelimiter(nextRune) {
 				return i + runeWidth, data[start:i + runeWidth], nil
 			}
-		} else if isRuneEqualToQuoteDelimiter(currentRune, quoteDelimiter) {
-			// takes one more character to include the delimiter
+		} else if currentRune == quoteDelimiter {
 			return i + runeWidth, data[start:i + runeWidth], nil
 		}
 	}
@@ -85,15 +84,6 @@ func isSpace(r rune) bool {
 	}
 }
 
-func isQuote(r rune) bool {
-	switch r {
-	case '\'', '"':
-		return true
-	default:
-		return false
-	}
-}
-
 func isUnquotedDelimiter(r rune) bool {
 	switch r {
 	case ';', ',', '(', ')', '[', ']', ' ', '\t', '\n', '\v', '\f', '\r':
@@ -103,33 +93,149 @@ func isUnquotedDelimiter(r rune) bool {
 	}
 }
 
-func isRuneEqualToQuoteDelimiter(r, delimiter rune) bool {
-	return r == delimiter
+func isQuote(r rune) bool {
+	switch r {
+	case '\'', '"':
+		return true
+	default:
+		return false
+	}
 }
 
-func validateScript(_ string, _ *bufio.Scanner) error {
-	// TODO: fix logic, quoted table name may have inner spaces
+func buildInsertScriptStruct(scanner *bufio.Scanner) (InsertScript, error) {
+	insertScript := InsertScript{}
+	var err error
 
-	// at End Of String
-	// atEOS := false
+	token, hasTokensLeft := getNextToken(scanner)
+	err = tokenMatchesAny(hasTokensLeft, strings.ToUpper(token), "INSERT")
+	if err != nil {
+		return insertScript, err
+	}
 
+	token, hasTokensLeft = getNextToken(scanner)
+	err = tokenMatchesAny(hasTokensLeft, strings.ToUpper(token), "INTO")
+	if err != nil {
+		return insertScript, err
+	}
+
+	token, hasTokensLeft = getNextToken(scanner)
+	err = validateNameMatchesRegex(hasTokensLeft, token)
+	if err != nil {
+		return insertScript, err
+	}
+	insertScript.tableName = token
+
+	token, hasTokensLeft = getNextToken(scanner)
+	err = tokenMatchesAny(hasTokensLeft, token, "(")
+	if err != nil {
+		return insertScript, err
+	}
+
+	for {
+		token, hasTokensLeft = getNextToken(scanner)
+		err = validateNameMatchesRegex(hasTokensLeft, token)
+		if err != nil {
+			return insertScript, err
+		}
+		insertScript.columns = append(insertScript.columns, token)
+		token, hasTokensLeft = getNextToken(scanner)
+		err = tokenMatchesAny(hasTokensLeft, token, ",", ")")
+		if err != nil {
+			return insertScript, err
+		}
+		if token == ")" {
+			break
+		}
+	}
+
+	token, hasTokensLeft = getNextToken(scanner)
+	err = tokenMatchesAny(hasTokensLeft, strings.ToUpper(token), "VALUES")
+	if err != nil {
+		return insertScript, err
+	}
+
+	var isTokenSemicolon bool
+	for !isTokenSemicolon {
+		var values []string
+		token, hasTokensLeft = getNextToken(scanner)
+		err = tokenMatchesAny(hasTokensLeft, token, "(")
+		if err != nil {
+			return insertScript, err
+		}
+		for {
+			token, hasTokensLeft = getNextToken(scanner)
+			if !hasTokensLeft {
+				return insertScript, InvalidSyntaxError
+			}
+			values = append(values, token)
+			token, hasTokensLeft = getNextToken(scanner)
+			err = tokenMatchesAny(hasTokensLeft, token, ",", ")")
+			if err != nil {
+				return insertScript, err
+			}
+			if token == ")" {
+				break
+			}
+		}
+		if len(insertScript.columns) != len(values) {
+			return insertScript, InvalidSyntaxError
+		}
+		insertScript.rows = append(insertScript.rows, values)
+		token, hasTokensLeft = getNextToken(scanner)
+		if token == ";" {
+			err = validateSemicolonRules(scanner)
+			return insertScript, err
+		}
+		err = tokenMatchesAny(hasTokensLeft, token, ",")
+		if err != nil {
+			return insertScript, err
+		}
+	}
+
+	return insertScript, nil
+}
+
+// get next token and return true when reaching the last token
+func getNextToken(scanner *bufio.Scanner) (token string, hasTokensLeft bool)  {
+	hasTokensLeft = scanner.Scan()
+	token = scanner.Text()
+	return
+}
+
+// return error if actual token doesn't match any of the expected, or if it's the last
+func tokenMatchesAny(hasTokensLeft bool, actualToken string, expectedTokens ...string) error {
+	for _, expected := range expectedTokens {
+		if actualToken == expected && hasTokensLeft {
+			return nil
+		}
+	}
+	return InvalidSyntaxError
+}
+
+func validateNameMatchesRegex(hasTokensLeft bool, token string) error {
+	matchIndexes := make([]int, 2)
+	if token[0] == '"' {
+		matchIndexes = quotedNameRegex.FindStringIndex(token)
+	} else {
+		matchIndexes = unquotedNameRegex.FindStringIndex(token)
+	}
+	if matchIndexes == nil || matchIndexes[0] != 0 || matchIndexes[1] != len(token) || !hasTokensLeft {
+		return InvalidSyntaxError
+	}
 	return nil
 }
 
-func useSplitSqlTokenFunc(scriptScanner *bufio.Scanner) {
-	hasTokensLeft := true
-	for true {
-		hasTokensLeft = scriptScanner.Scan()
-		if !hasTokensLeft {
-			break
-		}
-		fmt.Println(scriptScanner.Text())
+func validateSemicolonRules(scanner *bufio.Scanner) error {
+	hasTokensLeft := scanner.Scan()
+	if hasTokensLeft {
+		return InvalidSyntaxError
 	}
+	return nil
 }
 
 func main() {
 	script :=
-	`INSERT INTO facility (id, name, capacity, type, state, is_active) VALUES
+	`INSERT INTO "facility" (id, name, capacity, type, state, is_active) VALUES
 	(1, 'O-201', 30, 'CLASSROOM', 'AVAILABLE', true),
 	(2, 'O-102', 30, 'CLASSROOM', 'AVAILABLE', true),
 	(3, 'Quirófano 1', 6, 'OPERATINGROOM', 'AVAILABLE', true),
@@ -139,5 +245,10 @@ func main() {
 	(7, 'Laboratorio 1', 20, 'LABORATORY', 'AVAILABLE', true),
 	(8, 'Laboratorio 2', 20, 'LABORATORY', 'AVAILABLE', true);`
 	scanner := createScriptScanner(script)
-	useSplitSqlTokenFunc(scanner)
+	insertScript, err := buildInsertScriptStruct(scanner)
+
+	if err != nil {
+		fmt.Println(err)
+	}
+	fmt.Println(insertScript)
 }
