@@ -233,22 +233,48 @@ func validateSemicolonRules(scanner *bufio.Scanner) error {
 	return nil
 }
 
+func (insertScript InsertScript) buildJsonArray() string {
+	var builder strings.Builder
+	builder.WriteString("[\n")
+	for i, row := range insertScript.rows {
+		builder.WriteString("\t{\n")
+		for j, value := range row {
+			builder.WriteString("\t\t")
+			fmt.Fprintf(&builder, "\"%s\": %s", insertScript.columns[j], value)
+			if j == len(row) - 1 {
+				builder.WriteString("\n")
+			} else {
+				builder.WriteString(",\n")
+			}
+		}
+		builder.WriteString("\t}")
+		if i == len(insertScript.rows) - 1 {
+			builder.WriteString("\n")
+		} else {
+			builder.WriteString(",\n")
+		}
+	}
+	builder.WriteString("]\n")
+	return builder.String()
+}
+
 func main() {
 	script :=
-	`INSERT INTO "facility" (id, name, capacity, type, state, is_active) VALUES
-	(1, 'O-201', 30, 'CLASSROOM', 'AVAILABLE', true),
-	(2, 'O-102', 30, 'CLASSROOM', 'AVAILABLE', true),
-	(3, 'Quirófano 1', 6, 'OPERATINGROOM', 'AVAILABLE', true),
-	(4, 'Quirófano 2', 6, 'OPERATINGROOM', 'AVAILABLE', true),
-	(5, 'Clínica 1', 8, 'CLINIC', 'AVAILABLE', true),
-	(6, 'Clínica 2', 10, 'CLINIC', 'AVAILABLE', true),
-	(7, 'Laboratorio 1', 20, 'LABORATORY', 'AVAILABLE', true),
-	(8, 'Laboratorio 2', 20, 'LABORATORY', 'AVAILABLE', true);`
+	`INSERT INTO "facility" (name, capacity, type, state, is_active) VALUES
+	('O-201', 30, 'CLASSROOM', 'AVAILABLE', true),
+	('O-102', 30, 'CLASSROOM', 'AVAILABLE', true),
+	('Quirófano 1', 6, 'OPERATINGROOM', 'AVAILABLE', true),
+	('Quirófano 2', 6, 'OPERATINGROOM', 'AVAILABLE', true),
+	('Clínica 1', 8, 'CLINIC', 'AVAILABLE', true),
+	('Clínica 2', 10, 'CLINIC', 'AVAILABLE', true),
+	('Laboratorio 1', 20, 'LABORATORY', 'AVAILABLE', true),
+	('Laboratorio 2', 20, 'LABORATORY', 'AVAILABLE', true);`
 	scanner := createScriptScanner(script)
 	insertScript, err := buildInsertScriptStruct(scanner)
 
 	if err != nil {
 		fmt.Println(err)
 	}
-	fmt.Println(insertScript)
+	json := insertScript.buildJsonArray()
+	fmt.Println(json)
 }
